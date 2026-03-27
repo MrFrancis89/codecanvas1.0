@@ -18,4 +18,4 @@ const ToastManager = (() => {
   };
 
   return { show };
-})();p
+})();
