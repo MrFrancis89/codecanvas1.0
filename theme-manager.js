@@ -18,6 +18,11 @@ const ThemeManager = (() => {
     document.getElementById('icon-theme-light').style.display = theme === 'light' ? 'block' : 'none';
     if (window._cmEditor) {
       window._cmEditor.setOption('theme', theme === 'dark' ? 'one-dark' : 'default');
+      window._cmEditor.refresh();
+    }
+    // Atualiza highlighting completo se o EditorManager ja estiver pronto
+    if (typeof EditorManager !== 'undefined' && EditorManager.refreshHighlight) {
+      EditorManager.refreshHighlight();
     }
   };
 
