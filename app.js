@@ -73,11 +73,31 @@ const App = (() => {
     FileManager.init(savedData[IDB_KEYS.FILENAME]);
 
     // Aguarda CodeMirror estar disponível (carregado via CDN)
-    await new Promise(res => {
+    // Timeout de 10s para evitar loading infinito caso o CDN falhe
+    await new Promise((res, rej) => {
       if (window.CodeMirror) return res();
+      let elapsed = 0;
       const check = setInterval(() => {
+        elapsed += 50;
         if (window.CodeMirror) { clearInterval(check); res(); }
+        else if (elapsed >= 10000) {
+          clearInterval(check);
+          rej(new Error('CodeMirror não carregou (timeout). Verifique sua conexão.'));
+        }
       }, 50);
+    }).catch(err => {
+      console.error('[App] Erro crítico:', err.message);
+      const loading = document.getElementById('loading-screen');
+      if (loading) {
+        loading.innerHTML = `
+          <div style="text-align:center;padding:32px;color:#f0f0f8;font-family:sans-serif">
+            <div style="font-size:48px;margin-bottom:16px">⚠️</div>
+            <div style="font-size:20px;font-weight:700;margin-bottom:8px">Falha ao carregar</div>
+            <div style="font-size:14px;color:#a0a0c0;margin-bottom:24px">${err.message}</div>
+            <button onclick="location.reload()" style="background:#6366f1;color:white;border:none;padding:12px 28px;border-radius:10px;font-size:15px;cursor:pointer">Tentar novamente</button>
+          </div>`;
+      }
+      throw err;
     });
 
     EditorManager.init(savedData[IDB_KEYS.CONTENT]);
