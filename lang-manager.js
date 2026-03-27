@@ -7,7 +7,11 @@ const LangManager = (() => {
 
   const setMode = (mode) => {
     _current = mode;
-    if (window._cmEditor) window._cmEditor.setOption('mode', mode);
+    if (window._cmEditor) {
+      window._cmEditor.setOption('mode', mode);
+      // Força o re-render do highlighting ao trocar de linguagem
+      setTimeout(() => window._cmEditor && window._cmEditor.refresh(), 50);
+    }
     document.getElementById('lang-select').value = mode;
     document.getElementById('status-lang').textContent = AppConfig.MODE_LABELS[mode] || mode;
     StorageManager.set(AppConfig.IDB_KEYS.LANG, mode);
