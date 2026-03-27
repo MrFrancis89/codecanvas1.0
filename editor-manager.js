@@ -92,6 +92,14 @@ const EditorManager = (() => {
     _cm.setSize(null, '100%');
     _cm.on('cursorActivity', _updateStatus);
 
+    // Força syntax highlighting após init — necessário no iOS Safari
+    // onde o modo às vezes não é aplicado no primeiro render.
+    setTimeout(() => {
+      _cm.setOption('mode', LangManager.current());
+      _cm.setOption('theme', ThemeManager.current() === 'dark' ? 'one-dark' : 'default');
+      _cm.refresh();
+    }, 150);
+
     // Autosave com debounce
     let _saveTimer = null;
     const AUTOSAVE_DELAY_MS = 600;
