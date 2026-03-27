@@ -1,13 +1,16 @@
 /* ========== EDITOR MANAGER ==========
    Inicializa e gerencia a instância do CodeMirror.
-   Inclui autosave com debounce e pinch-to-zoom (Math.hypot).
+   Inclui autosave com debounce e pinch-to-zoom corrigido para iOS Safari.
    ==================================== */
 
 const EditorManager = (() => {
   let _cm = null;
+
+  // Estado do pinch-to-zoom
   let _pinchActive = false;
   let _initialDistance = 0;
   let _initialFontSize = 0;
+  let _currentFontSize = 16;
 
   const _updateStatus = () => {
     if (!_cm) return;
@@ -26,16 +29,23 @@ const EditorManager = (() => {
 
   const _setFontSize = (size) => {
     if (!_cm) return;
-    const editorElement = _cm.getWrapperElement();
-    editorElement.style.fontSize = `${size}px`;
+    _currentFontSize = Math.min(Math.max(size, 10), 40);
+    _cm.getWrapperElement().style.fontSize = _currentFontSize + 'px';
     _cm.refresh();
   };
 
   const _getCurrentFontSize = () => {
-    if (!_cm) return 14;
-    const editorElement = _cm.getWrapperElement();
-    const computed = getComputedStyle(editorElement).fontSize;
-    return parseFloat(computed) || 14;
+    if (!_cm) return _currentFontSize;
+    return parseFloat(getComputedStyle(_cm.getWrapperElement()).fontSize) || _currentFontSize;
+  };
+
+  // Forca syntax highlighting — necessario no iOS Safari onde o tema
+  // nao e aplicado no primeiro render.
+  const _forceHighlight = () => {
+    if (!_cm) return;
+    _cm.setOption('mode', LangManager.current());
+    _cm.setOption('theme', ThemeManager.current() === 'dark' ? 'one-dark' : 'default');
+    _cm.refresh();
   };
 
   const init = (initialContent) => {
@@ -71,9 +81,9 @@ const EditorManager = (() => {
           }
         },
         'Shift-Tab': (cm) => cm.indentSelection('subtract'),
-        'Ctrl-Z': (cm) => cm.undo(),
-        'Ctrl-Y': (cm) => cm.redo(),
-        'Cmd-Z':  (cm) => cm.undo(),
+        'Ctrl-Z':  (cm) => cm.undo(),
+        'Ctrl-Y':  (cm) => cm.redo(),
+        'Cmd-Z':   (cm) => cm.undo(),
         'Cmd-Shift-Z': (cm) => cm.redo(),
         'Ctrl-S': () => FileManager.exportFile(),
         'Cmd-S':  () => FileManager.exportFile(),
@@ -92,75 +102,62 @@ const EditorManager = (() => {
     _cm.setSize(null, '100%');
     _cm.on('cursorActivity', _updateStatus);
 
-    // Força syntax highlighting após init — necessário no iOS Safari
-    // onde o modo às vezes não é aplicado no primeiro render.
-    setTimeout(() => {
-      _cm.setOption('mode', LangManager.current());
-      _cm.setOption('theme', ThemeManager.current() === 'dark' ? 'one-dark' : 'default');
-      _cm.refresh();
-    }, 150);
+    // Forca o highlighting em 3 momentos para garantir que o CSS do CDN
+    // ja esteja carregado antes de aplicar o tema.
+    _forceHighlight();
+    setTimeout(_forceHighlight, 300);
+    setTimeout(_forceHighlight, 800);
 
     // Autosave com debounce
     let _saveTimer = null;
-    const AUTOSAVE_DELAY_MS = 600;
-
     _cm.on('change', () => {
       FileManager.setDirty(true);
       clearTimeout(_saveTimer);
       _saveTimer = setTimeout(() => {
         StorageManager.set(AppConfig.IDB_KEYS.CONTENT, _cm.getValue());
-      }, AUTOSAVE_DELAY_MS);
+      }, 600);
     });
 
     _updateStatus();
 
-    // --- Pinch-to-zoom (mobile) usando Math.hypot ---
-    const editorElement = _cm.getWrapperElement();
-    let touchCache = null;
+    // ── Pinch-to-zoom corrigido para iOS Safari ──────────────────────
+    // O viewport NAO deve ter maximum-scale=1.0 para este gesto funcionar.
+    // Capturamos touchmove com passive:false para poder chamar preventDefault
+    // e bloquear o zoom nativo do Safari apenas durante o gesto de 2 dedos.
+    const getDistance = (a, b) =>
+      Math.hypot(b.clientX - a.clientX, b.clientY - a.clientY);
 
-    const getDistance = (t1, t2) => {
-      const dx = t1.clientX - t2.clientX;
-      const dy = t1.clientY - t2.clientY;
-      return Math.hypot(dx, dy);
-    };
+    const wrapper = _cm.getWrapperElement();
 
-    const onTouchStart = (e) => {
+    wrapper.addEventListener('touchstart', (e) => {
       if (e.touches.length === 2) {
-        e.preventDefault();
         _pinchActive = true;
-        touchCache = { t1: e.touches[0], t2: e.touches[1] };
-        _initialDistance = getDistance(touchCache.t1, touchCache.t2);
+        _initialDistance = getDistance(e.touches[0], e.touches[1]);
         _initialFontSize = _getCurrentFontSize();
       }
-    };
+    }, { passive: true });
 
-    const onTouchMove = (e) => {
-      if (_pinchActive && e.touches.length === 2) {
-        e.preventDefault();
-        const newDist = getDistance(e.touches[0], e.touches[1]);
-        const scale = newDist / _initialDistance;
-        let newSize = _initialFontSize * scale;
-        newSize = Math.min(Math.max(newSize, 12), 32);
-        _setFontSize(newSize);
-      }
-    };
+    wrapper.addEventListener('touchmove', (e) => {
+      if (!_pinchActive || e.touches.length !== 2) return;
+      e.preventDefault(); // bloqueia zoom nativo so durante pinça
+      const dist  = getDistance(e.touches[0], e.touches[1]);
+      const ratio = dist / _initialDistance;
+      _setFontSize(_initialFontSize * ratio);
+    }, { passive: false });
 
-    const onTouchEnd = () => {
-      _pinchActive = false;
-      touchCache = null;
+    const endPinch = (e) => {
+      if (e.touches.length < 2) _pinchActive = false;
     };
-
-    editorElement.addEventListener('touchstart', onTouchStart, { passive: false });
-    editorElement.addEventListener('touchmove', onTouchMove, { passive: false });
-    editorElement.addEventListener('touchend', onTouchEnd);
-    editorElement.addEventListener('touchcancel', onTouchEnd);
+    wrapper.addEventListener('touchend',    endPinch, { passive: true });
+    wrapper.addEventListener('touchcancel', endPinch, { passive: true });
   };
 
-  const getValue = () => _cm ? _cm.getValue() : '';
-  const setValue = (v) => { if (_cm) { _cm.setValue(v); _cm.clearHistory(); } };
+  const getValue     = () => _cm ? _cm.getValue() : '';
+  const setValue     = (v) => { if (_cm) { _cm.setValue(v); _cm.clearHistory(); } };
   const getSelection = () => _cm ? _cm.getSelection() : '';
-  const focus = () => _cm && _cm.focus();
-  const getCM = () => _cm;
+  const focus        = () => _cm && _cm.focus();
+  const getCM        = () => _cm;
+  const refreshHighlight = _forceHighlight;
 
-  return { init, getValue, setValue, getSelection, focus, getCM };
+  return { init, getValue, setValue, getSelection, focus, getCM, refreshHighlight };
 })();
